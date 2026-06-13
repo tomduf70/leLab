@@ -50,7 +50,7 @@ export interface TrainingRequest {
   optimizer_grad_clip_norm?: number;
   use_policy_training_preset: boolean;
   // Optional target for runner dispatch; omitted ⇒ local.
-  target?: { runner: "local" | "hf_cloud"; flavor?: string };
+  target?: { runner: "local" | "hf_cloud" | "ssh_remote"; flavor?: string };
 }
 
 export interface JobRecord {
@@ -64,7 +64,7 @@ export interface JobRecord {
   exit_code: number | null;
   error_message: string | null;
   metrics: TrainingMetrics;
-  runner: "local" | "hf_cloud";
+  runner: "local" | "hf_cloud" | "ssh_remote";
   hf_job_id: string | null;
   hf_flavor: string | null;
   hf_repo_id: string | null;

@@ -1,5 +1,5 @@
 export interface TrainingConfig {
-  target: { runner: "local" | "hf_cloud"; flavor?: string };
+  target: { runner: "local" | "hf_cloud" | "ssh_remote"; flavor?: string };
 
   // Dataset configuration
   dataset_repo_id: string;

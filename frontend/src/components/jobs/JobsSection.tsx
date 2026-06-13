@@ -169,8 +169,13 @@ const JobsSection: React.FC = () => {
     [hubModels, matchesQuery],
   );
 
+  // "On-machine" jobs: local + ssh-remote. Both are tracked JobRecords with a
+  // JobCard, stop/delete and local monitoring (unlike stackable cloud jobs).
   const localJobs = useMemo(
-    () => filteredJobs.filter((j) => j.runner === "local"),
+    () =>
+      filteredJobs.filter(
+        (j) => j.runner === "local" || j.runner === "ssh_remote",
+      ),
     [filteredJobs],
   );
   const trackedCloudJobs = useMemo(
@@ -269,7 +274,7 @@ const JobsSection: React.FC = () => {
 
       <div className="space-y-3">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-          Local jobs
+          Local &amp; remote jobs
         </h3>
         {localActive.length === 0 ? (
           <p className="text-sm text-slate-500">

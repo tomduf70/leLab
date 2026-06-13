@@ -36,11 +36,17 @@ const TargetCard: React.FC<TargetCardProps> = ({
 }) => {
   const target = config.target;
   const value =
-    target.runner === "local" ? "local" : `hf:${target.flavor ?? ""}`;
+    target.runner === "local"
+      ? "local"
+      : target.runner === "ssh_remote"
+      ? "ssh"
+      : `hf:${target.flavor ?? ""}`;
 
   const handleChange = (v: string) => {
     if (v === "local") {
       updateConfig("target", { runner: "local" });
+    } else if (v === "ssh") {
+      updateConfig("target", { runner: "ssh_remote" });
     } else if (v.startsWith("hf:")) {
       const flavor = v.slice("hf:".length);
       updateConfig("target", { runner: "hf_cloud", flavor });
@@ -61,6 +67,9 @@ const TargetCard: React.FC<TargetCardProps> = ({
             </SelectTrigger>
             <SelectContent className="bg-slate-800 border-slate-600 text-white">
               <SelectItem value="local">Local — your machine (free)</SelectItem>
+              <SelectItem value="ssh">
+                Remote — robotic-ai · RTX 5060 Ti (free)
+              </SelectItem>
               {flavors.map((f) => (
                 <SelectItem
                   key={f.name}

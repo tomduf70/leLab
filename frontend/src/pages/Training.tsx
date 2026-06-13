@@ -130,6 +130,7 @@ const ConfigurationMode: React.FC = () => {
   const [trainingExtraAvailable, setTrainingExtraAvailable] = useState<boolean | null>(null);
   const [trainingExtraInstallHint, setTrainingExtraInstallHint] = useState<string>("pip install accelerate");
   const [localJobRunning, setLocalJobRunning] = useState<boolean>(false);
+  const [remoteJobRunning, setRemoteJobRunning] = useState<boolean>(false);
   const [isStarting, setIsStarting] = useState(false);
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [flavors, setFlavors] = useState<RunnerFlavor[]>([]);
@@ -154,16 +155,22 @@ const ConfigurationMode: React.FC = () => {
   }, [baseUrl, fetchWithHeaders]);
 
   useEffect(() => {
-    // Only the local lock matters for the Start button; cloud jobs can stack.
-    // Pull a generous slice so a running local isn't masked by newer cloud
-    // jobs in the started_at-desc ordering.
+    // The local and ssh-remote locks matter for the Start button (each is a
+    // single GPU); cloud jobs can stack. Pull a generous slice so a running
+    // job isn't masked by newer ones in the started_at-desc ordering.
     listJobs(baseUrl, fetchWithHeaders, 200)
-      .then((j) =>
+      .then((j) => {
         setLocalJobRunning(
           j.some((r) => r.runner === "local" && r.state === "running"),
-        ),
-      )
-      .catch(() => setLocalJobRunning(false));
+        );
+        setRemoteJobRunning(
+          j.some((r) => r.runner === "ssh_remote" && r.state === "running"),
+        );
+      })
+      .catch(() => {
+        setLocalJobRunning(false);
+        setRemoteJobRunning(false);
+      });
   }, [baseUrl, fetchWithHeaders]);
 
   useEffect(() => {
@@ -201,11 +208,14 @@ const ConfigurationMode: React.FC = () => {
       toast({ title: "Error", description: msg, variant: "destructive" });
       // If the failure was the 409 case, refresh our running-job knowledge.
       listJobs(baseUrl, fetchWithHeaders, 200)
-        .then((j) =>
+        .then((j) => {
           setLocalJobRunning(
             j.some((r) => r.runner === "local" && r.state === "running"),
-          ),
-        )
+          );
+          setRemoteJobRunning(
+            j.some((r) => r.runner === "ssh_remote" && r.state === "running"),
+          );
+        })
         .catch(() => {});
     } finally {
       setIsStarting(false);
@@ -242,14 +252,19 @@ const ConfigurationMode: React.FC = () => {
     trainingConfig.target.runner === "hf_cloud" && !trainingConfig.target.flavor;
   const localBlocked =
     trainingConfig.target.runner === "local" && localJobRunning;
+  const remoteBlocked =
+    trainingConfig.target.runner === "ssh_remote" && remoteJobRunning;
   const startDisabled =
     isStarting ||
     !trainingConfig.dataset_repo_id.trim() ||
     localBlocked ||
+    remoteBlocked ||
     (targetRequiresAuth && !authenticated) ||
     targetMissingFlavor;
   const startTooltip = localBlocked
     ? "Another local training is already running"
+    : remoteBlocked
+    ? "Another remote training is already running on robotic-ai"
     : targetRequiresAuth && !authenticated
     ? "Log in to Hugging Face to use cloud compute"
     : targetMissingFlavor
@@ -512,12 +527,18 @@ const MonitoringMode: React.FC<{ jobId: string }> = ({ jobId }) => {
                   <span className="text-xs px-2 py-0.5 rounded bg-amber-900/40 text-amber-200 border border-amber-700">
                     HF · {job.hf_flavor ?? "cloud"}
                   </span>
+                ) : job.runner === "ssh_remote" ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-sky-900/40 text-sky-200 border border-sky-700">
+                    Remote · robotic-ai
+                  </span>
                 ) : (
                   <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-200 border border-slate-600">
                     Local
                   </span>
                 )}
-                {job.runner === "hf_cloud" && job.hf_repo_id && job.state === "done" && (
+                {(job.runner === "hf_cloud" || job.runner === "ssh_remote") &&
+                  job.hf_repo_id &&
+                  job.state === "done" && (
                   <a
                     href={`https://huggingface.co/${job.hf_repo_id}`}
                     target="_blank"
