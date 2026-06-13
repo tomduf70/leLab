@@ -50,7 +50,7 @@ class JobTarget(BaseModel):
     """Where a job should run. `local` ⇒ LocalJobRunner. `hf_cloud` requires
     a non-empty `flavor` from HfApi.list_jobs_hardware()."""
 
-    runner: Literal["local", "hf_cloud"] = "local"
+    runner: Literal["local", "hf_cloud", "ssh_remote"] = "local"
     flavor: str | None = None
 
 
@@ -79,7 +79,7 @@ class JobRecord(BaseModel):
     exit_code: int | None = None
     error_message: str | None = None
     metrics: TrainingMetrics = TrainingMetrics()
-    runner: Literal["local", "hf_cloud"] = "local"
+    runner: Literal["local", "hf_cloud", "ssh_remote"] = "local"
     # PID of the detached subprocess (local runner only); survives uvicorn
     # --reload so a fresh registry can re-attach by tailing the log file.
     process_pid: int | None = None
@@ -750,11 +750,12 @@ class JobRegistry:
 
         with self._lock:
             # Local trainings are bounded by this machine's GPU/USB resources,
-            # so at most one runs at a time. Cloud trainings each get their
-            # own remote container, so any number can be in flight in parallel.
-            if target.runner == "local":
+            # so at most one runs at a time. The SSH-remote host is a single
+            # GPU too, so it's also one-at-a-time (per runner). Cloud trainings
+            # each get their own remote container, so any number run in parallel.
+            if target.runner in ("local", "ssh_remote"):
                 for r in self._records.values():
-                    if r.state == "running" and r.runner == "local":
+                    if r.state == "running" and r.runner == target.runner:
                         raise JobAlreadyRunningError(r.id)
 
             job_id = _generate_job_id(config.policy_type, config.dataset_repo_id)
@@ -779,6 +780,10 @@ class JobRegistry:
             log_path = _job_log_path(self._output_root, job_id)
             if target.runner == "local":
                 runner = LocalJobRunner(record.metrics, log_file_path=log_path)
+            elif target.runner == "ssh_remote":
+                from .runners.ssh_remote import SshJobRunner  # lazy: avoid import cycle
+
+                runner = SshJobRunner(record.metrics, log_path)
             else:
                 runner = HfCloudJobRunner(record.metrics, log_path, target.flavor)
 
@@ -795,6 +800,10 @@ class JobRegistry:
             # Capture runner-specific identifiers.
             if target.runner == "local":
                 record.process_pid = runner.pid()
+            elif target.runner == "ssh_remote":
+                # SshJobRunner.start mutated config to set policy_repo_id; mirror
+                # it so list_checkpoints reads the Hub repo (same as cloud jobs).
+                record.hf_repo_id = config.policy_repo_id
             else:
                 record.hf_job_id = runner.hf_job_id()
                 record.hf_job_url = runner.hf_job_url()
@@ -1043,6 +1052,19 @@ class JobRegistry:
                         record.hf_flavor,
                     )
                     runner.reattach(record.hf_job_id)
+                    self._runners[record.id] = runner
+                elif record.runner == "ssh_remote":
+                    # The remote training runs detached (setsid), so it survives
+                    # an Orin restart. Reattach derives all remote paths from the
+                    # job id — nothing extra to persist.
+                    logger.info("Re-attaching to SSH job %s", record.id)
+                    from .runners.ssh_remote import SshJobRunner
+
+                    runner = SshJobRunner(
+                        record.metrics,
+                        _job_log_path(self._output_root, record.id),
+                    )
+                    runner.reattach(record.id)
                     self._runners[record.id] = runner
                 else:
                     # Malformed running record — mark interrupted.

@@ -20,5 +20,6 @@ Protocol declared in app/jobs.py.
 """
 
 from .hf_cloud import HfCloudJobRunner
+from .ssh_remote import SshJobRunner
 
-__all__ = ["HfCloudJobRunner"]
+__all__ = ["HfCloudJobRunner", "SshJobRunner"]
