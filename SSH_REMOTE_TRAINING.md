@@ -10,6 +10,36 @@ slow for training) and the training is deported to a **dedicated PC**
 the **Hugging Face Hub** — SSH is used *only* to launch and monitor the remote
 `lerobot-train` process.
 
+## Quick start (everyday launch)
+
+Once the [one-time setup](#one-time-setup) is done, this is all you need each
+time you want to run a remote training:
+
+1. **On the Orin** — start LeLab:
+   ```bash
+   lelab
+   ```
+   It serves the UI on `http://localhost:8000` (bound to localhost only). Leave
+   it running. To stop it later: `Ctrl+C` in that terminal.
+
+2. **On your Mac** — open an SSH tunnel and leave the terminal open:
+   ```bash
+   ssh -N -L 8000:127.0.0.1:8000 admin-si@192.168.1.134
+   ```
+
+3. **In your Mac browser** — open **http://localhost:8000**
+   (use `localhost`, **not** the IP — see [Accessing the UI remotely](#accessing-the-ui-remotely-from-the-mac)).
+
+4. **In the UI** — go to **Training → Compute target →
+   "Remote — robotic-ai · RTX 5060 Ti"**, pick a dataset, hit **Start**. You
+   land on the live monitoring page (logs + loss curves); checkpoints appear
+   under the job as they're pushed to the Hub.
+
+> If the **"Remote"** option is missing from the dropdown, the bundled frontend
+> is stale on this branch. Rebuild it once — `cd frontend && npm run build` —
+> then restart `lelab` (or just use `lelab --dev`, which always serves the live
+> source). On `main`, CI builds it for you.
+
 ## How it works
 
 ```
