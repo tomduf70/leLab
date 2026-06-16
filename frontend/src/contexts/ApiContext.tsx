@@ -28,7 +28,13 @@ const resolveInitialBaseUrl = (): string => {
     }
   }
 
-  return window.localStorage.getItem(STORAGE_KEY) || DEFAULT_LOCALHOST;
+  // The backend serves this frontend, so the API lives at the same origin we
+  // were loaded from — `http://localhost:8000` when run locally, but also
+  // `https://lelab.iscol.fr` (or any reverse-proxy/tunnel host) when served
+  // remotely. Defaulting to the current origin avoids hard-coding localhost,
+  // which broke API calls (and silently forced the HF auth banner) behind a
+  // cloudflared tunnel.
+  return window.localStorage.getItem(STORAGE_KEY) || window.location.origin;
 };
 
 export const ApiProvider: React.FC<{ children: ReactNode }> = ({
