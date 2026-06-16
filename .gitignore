@@ -71,3 +71,6 @@ HTTPS_SETUP.md
 
 # Self-signed dev certs (regenerate per HTTPS_SETUP.md)
 certs/
+
+# local uv lockfile (regenerable; upstream tracks deps via pyproject.toml)
+uv.lock
