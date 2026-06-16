@@ -198,12 +198,21 @@ export async function deleteJob(
   });
 }
 
+export interface RunnerAccelerator {
+  type: string;
+  model: string;
+  quantity: string;
+  vram: string;
+  manufacturer: string;
+}
+
 export interface RunnerFlavor {
   name: string;
   pretty_name: string;
   cpu: string;
   ram: string;
-  accelerator: string | null;
+  // HF Jobs returns null for CPU flavors and a structured object for GPU ones.
+  accelerator: RunnerAccelerator | null;
   unit_cost_usd: number;
   unit_label: string;
 }

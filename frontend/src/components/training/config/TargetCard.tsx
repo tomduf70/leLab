@@ -23,7 +23,7 @@ const formatHourly = (unitCostUsd: number, unitLabel: string): string => {
 };
 
 const formatFlavorLine = (f: RunnerFlavor): string => {
-  const accel = f.accelerator ? f.accelerator : f.cpu;
+  const accel = f.accelerator ? f.accelerator.vram : f.cpu;
   return `${f.pretty_name} · ${accel} · ${formatHourly(f.unit_cost_usd, f.unit_label)}`;
 };
 
