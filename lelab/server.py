@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
@@ -1071,6 +1071,92 @@ def get_available_cameras():
     except Exception as e:
         logger.error(f"Error detecting cameras: {e}")
         return {"status": "error", "message": str(e), "cameras": []}
+
+
+def _cv2_capture_backend() -> int:
+    """cv2 capture backend per platform, mirroring record._platform_backend so a
+    preview stream opens the same physical device that an /available-cameras index
+    (and the recorder) resolves to. Returns the cv2 API-preference int."""
+    import platform
+
+    import cv2
+
+    system = platform.system()
+    if system == "Linux":
+        return cv2.CAP_V4L2
+    if system == "Darwin":
+        return cv2.CAP_AVFOUNDATION
+    if system == "Windows":
+        return cv2.CAP_DSHOW
+    return cv2.CAP_ANY
+
+
+# Preview-stream defaults — small frame + modest fps to stay light over a tunnel.
+_STREAM_DEFAULT_WIDTH = 640
+_STREAM_DEFAULT_HEIGHT = 480
+_STREAM_DEFAULT_FPS = 15
+_STREAM_DEFAULT_QUALITY = 70
+
+
+@app.get("/camera-stream/{camera_index}")
+async def camera_stream(
+    request: Request,
+    camera_index: int,
+    width: int = _STREAM_DEFAULT_WIDTH,
+    height: int = _STREAM_DEFAULT_HEIGHT,
+    fps: int = _STREAM_DEFAULT_FPS,
+    quality: int = _STREAM_DEFAULT_QUALITY,
+):
+    """MJPEG preview of a backend (cv2) camera by its /available-cameras index.
+
+    For remote clients whose browser can't reach the host's cameras via
+    getUserMedia (the "No browser match" case over lelab.iscol.fr): the frames are
+    read on the host and streamed through the tunnel. Preview-only — this opens the
+    device with cv2, so the frontend must drop the stream before recording (lerobot
+    needs exclusive access); the generator releases the capture the moment the
+    client disconnects. Returns 503 if the camera can't be opened.
+    """
+    try:
+        import cv2
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="OpenCV not available") from exc
+
+    backend = _cv2_capture_backend()
+    cap = await asyncio.to_thread(cv2.VideoCapture, camera_index, backend)
+    if not cap.isOpened():
+        await asyncio.to_thread(cap.release)
+        raise HTTPException(status_code=503, detail=f"Cannot open camera {camera_index}")
+
+    # Best-effort capture tuning; drivers that don't support it just ignore these.
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    fps = max(1, min(fps, 30))
+    frame_interval = 1.0 / fps
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, max(1, min(quality, 95))]
+
+    async def frames():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                ok, frame = await asyncio.to_thread(cap.read)
+                if not ok:
+                    await asyncio.sleep(0.1)
+                    continue
+                ok, buf = await asyncio.to_thread(cv2.imencode, ".jpg", frame, encode_params)
+                if not ok:
+                    continue
+                jpg = buf.tobytes()
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
+                )
+                await asyncio.sleep(frame_interval)
+        finally:
+            await asyncio.to_thread(cap.release)
+
+    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 RobotSideLiteral = Literal["leader", "follower"]

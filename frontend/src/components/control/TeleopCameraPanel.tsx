@@ -33,6 +33,8 @@ const TeleopCameraPanel: React.FC = () => {
     key: c.id,
     name: c.name,
     deviceId: c.device_id,
+    // Backend MJPEG fallback index for remote access (no browser device match).
+    cameraIndex: c.camera_index,
   }));
 
   return (
@@ -71,6 +73,7 @@ const TeleopCameraPanel: React.FC = () => {
               <CameraFeed
                 key={`${feed.key}:${reloadKey}`}
                 deviceId={feed.deviceId}
+                cameraIndex={feed.cameraIndex}
                 label={feed.name}
               />
             ))}

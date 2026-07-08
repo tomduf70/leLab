@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { useAvailableCameras } from "@/hooks/useAvailableCameras";
+import { useApi } from "@/contexts/ApiContext";
 import { useCameraStream } from "@/hooks/useCameraStream";
 
 // Sentinels distinguish "leave unset" (auto-detect / platform default) from an
@@ -329,11 +330,18 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
   onRemove,
   onUpdate,
 }) => {
+  const { baseUrl } = useApi();
   const { videoRef, hasError: streamError } = useCameraStream(
     camera.device_id,
     paused
   );
+  const [streamFailed, setStreamFailed] = useState(false);
   const showVideo = !paused && camera.device_id && !streamError;
+  // Remote fallback: no matching browser device (or its preview failed) but we know
+  // the cv2 index → stream the frames from the host over the tunnel. Gated on
+  // !paused so the capture is released while recording (lerobot needs the device).
+  const showStream =
+    !showVideo && !paused && camera.camera_index != null && !streamFailed;
   return (
     <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
       <div className="aspect-[4/3] bg-gray-800 relative">
@@ -343,6 +351,13 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
             autoPlay
             muted
             playsInline
+            className="w-full h-full object-cover"
+          />
+        ) : showStream ? (
+          <img
+            src={`${baseUrl}/camera-stream/${camera.camera_index}`}
+            alt={camera.name}
+            onError={() => setStreamFailed(true)}
             className="w-full h-full object-cover"
           />
         ) : (
