@@ -80,6 +80,7 @@ from .teleoperate import (
 
 # Training is now job-based; see app/jobs.py.
 from .train import TrainingRequest
+from .update import handle_run_update, handle_update_check
 from .utils import config
 from .utils.config import (
     FOLLOWER_CONFIG_PATH,
@@ -99,12 +100,17 @@ from .utils.config import (
 )
 from .utils.hf_auth import cached_whoami, handle_hf_auth_status, handle_hf_login, shared_hf_api
 from .utils.system import (
+    handle_get_cuda_status,
+    handle_get_policy_extra,
     handle_get_training_extra,
     handle_get_wandb_extra,
+    handle_install_policy_extra,
+    handle_install_policy_extra_status,
     handle_install_training_extra,
     handle_install_training_extra_status,
     handle_install_wandb_extra,
     handle_install_wandb_extra_status,
+    warn_if_cuda_mismatch,
 )
 
 # Set up logging
@@ -486,6 +492,20 @@ async def create_training_job(req: Request):
     return record
 
 
+class ImportModelRequest(BaseModel):
+    source: str
+    name: str | None = None
+
+
+@app.post("/jobs/import", status_code=201)
+def import_model(body: ImportModelRequest):
+    """Register an external model (local dir or HF repo) as a pseudo-job."""
+    try:
+        return job_registry.register_imported(body.source, body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/jobs")
 def list_jobs(limit: int = 10):
     return {"jobs": job_registry.list(limit=limit)}
@@ -691,6 +711,12 @@ def get_runners_hardware():
 # ============================================================================
 
 
+@app.get("/system/cuda-status")
+def get_cuda_status():
+    """Report whether an NVIDIA GPU is present but PyTorch is CPU-only (issue #30)."""
+    return handle_get_cuda_status()
+
+
 @app.get("/system/training-extra")
 def get_training_extra():
     """Return whether the LeRobot training extra (accelerate) is importable."""
@@ -725,6 +751,37 @@ def install_wandb_extra():
 def install_wandb_extra_status():
     """Return current wandb install state plus any pending log lines (drained on read)."""
     return handle_install_wandb_extra_status()
+
+
+@app.get("/system/policy-extra/{policy_type}")
+def get_policy_extra(policy_type: str):
+    """Whether the optional LeRobot extra a policy needs (e.g. transformers for
+    smolvla/pi0, diffusers for diffusion) is importable. Core policies report available."""
+    return handle_get_policy_extra(policy_type)
+
+
+@app.post("/system/policy-extra/{policy_type}/install")
+def install_policy_extra(policy_type: str):
+    """Spawn `pip install lerobot[<extra>]` for the policy's extra in the background."""
+    return handle_install_policy_extra(policy_type)
+
+
+@app.get("/system/policy-extra/{policy_type}/install-status")
+def install_policy_extra_status(policy_type: str):
+    """Return the policy extra's install state plus any pending log lines (drained on read)."""
+    return handle_install_policy_extra_status(policy_type)
+
+
+@app.get("/system/update-check")
+def update_check():
+    """Report whether a newer LeLab commit exists on GitHub (cached, silent on failure)."""
+    return handle_update_check()
+
+
+@app.post("/system/update")
+def run_update():
+    """Run the pip upgrade in-process; the user must restart lelab afterwards."""
+    return handle_run_update()
 
 
 # Replay is rendered by the embedded lerobot/visualize_dataset Space; no backend routes needed.
@@ -1158,6 +1215,12 @@ def delete_robot(name: str):
     if delete_robot_record(name):
         return {"status": "success"}
     return JSONResponse(status_code=404, content={"status": "error", "message": "Robot not found"})
+
+
+@app.on_event("startup")
+def startup_event():
+    """One-time startup diagnostics surfaced in the server terminal."""
+    warn_if_cuda_mismatch()
 
 
 @app.on_event("shutdown")

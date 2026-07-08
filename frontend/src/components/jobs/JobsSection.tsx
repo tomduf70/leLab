@@ -18,13 +18,14 @@ import JobCard from "./JobCard";
 import HubJobCard from "./HubJobCard";
 import HubModelCard from "./HubModelCard";
 import InferenceModal from "@/components/landing/InferenceModal";
+import ImportModelModal from "./ImportModelModal";
 import { useRobots } from "@/hooks/useRobots";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronRight, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, Download, RefreshCw, Search } from "lucide-react";
 
 const LIMIT = 10;
 
@@ -51,6 +52,7 @@ const JobsSection: React.FC = () => {
 
   const { selectedRecord } = useRobots();
   const [inferenceModalOpen, setInferenceModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [inferenceJob, setInferenceJob] = useState<JobRecord | null>(null);
   const [inferenceStep, setInferenceStep] = useState<number | null>(null);
 
@@ -182,6 +184,10 @@ const JobsSection: React.FC = () => {
     () => filteredJobs.filter((j) => j.runner === "hf_cloud"),
     [filteredJobs],
   );
+  const importedJobs = useMemo(
+    () => filteredJobs.filter((j) => j.runner === "imported"),
+    [filteredJobs],
+  );
   // Hub jobs already mirrored by a local JobRecord get their richer card via
   // trackedCloudJobs; everything else from the hub gets a plain HubJobCard.
   const trackedHfJobIds = useMemo(
@@ -259,6 +265,15 @@ const JobsSection: React.FC = () => {
             />
           </div>
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setImportModalOpen(true)}
+            className="h-8 border-slate-700 bg-slate-800/50 text-slate-200 hover:text-white"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            Import model
+          </Button>
+          <Button
             variant="ghost"
             size="icon"
             onClick={refresh}
@@ -272,67 +287,102 @@ const JobsSection: React.FC = () => {
 
       {error ? <p className="text-sm text-red-300">Couldn't load jobs: {error}</p> : null}
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-          Local &amp; remote jobs
-        </h3>
-        {localActive.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            {query
-              ? "No local jobs match your search."
-              : "No active local jobs. Start one from the Training page."}
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {localActive.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                onStop={handleStop}
-                onDelete={handleDelete}
-                onPlay={handlePlay}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      <Collapsible defaultOpen>
+        <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-400 hover:text-white transition-colors">
+          <ChevronRight className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-90" />
+          Local &amp; remote jobs ({localActive.length})
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          {localActive.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {query
+                ? "No local jobs match your search."
+                : "No active local jobs. Start one from the Training page."}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {localActive.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onStop={handleStop}
+                  onDelete={handleDelete}
+                  onPlay={handlePlay}
+                />
+              ))}
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
+
+      {importedJobs.length > 0 ? (
+        <>
+          <div className="border-t border-slate-700" />
+          <Collapsible defaultOpen>
+            <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-400 hover:text-white transition-colors">
+              <ChevronRight className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-90" />
+              Imported models ({importedJobs.length})
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {importedJobs.map((job) => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    onStop={handleStop}
+                    onDelete={handleDelete}
+                    onPlay={handlePlay}
+                  />
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </>
+      ) : null}
 
       <div className="border-t border-slate-700" />
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-          Online jobs
-        </h3>
-        {!hubAuthenticated && trackedCloudJobs.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Sign in with Hugging Face to see your cloud jobs.
-          </p>
-        ) : trackedCloudActive.length === 0 &&
-          untrackedHubActive.length === 0 &&
-          untrackedHubModels.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            {query ? "No online jobs match your search." : "No active cloud jobs."}
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {trackedCloudActive.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                onStop={handleStop}
-                onDelete={handleDelete}
-                onPlay={handlePlay}
-              />
-            ))}
-            {untrackedHubActive.map((job) => (
-              <HubJobCard key={job.id} job={job} />
-            ))}
-            {untrackedHubModels.map((model) => (
-              <HubModelCard key={model.repo_id} model={model} />
-            ))}
-          </div>
-        )}
-      </div>
+      <Collapsible defaultOpen>
+        <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-400 hover:text-white transition-colors">
+          <ChevronRight className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-90" />
+          Online jobs (
+          {trackedCloudActive.length +
+            untrackedHubActive.length +
+            untrackedHubModels.length}
+          )
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          {!hubAuthenticated && trackedCloudJobs.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Sign in with Hugging Face to see your cloud jobs.
+            </p>
+          ) : trackedCloudActive.length === 0 &&
+            untrackedHubActive.length === 0 &&
+            untrackedHubModels.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {query ? "No online jobs match your search." : "No active cloud jobs."}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {trackedCloudActive.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onStop={handleStop}
+                  onDelete={handleDelete}
+                  onPlay={handlePlay}
+                />
+              ))}
+              {untrackedHubActive.map((job) => (
+                <HubJobCard key={job.id} job={job} />
+              ))}
+              {untrackedHubModels.map((model) => (
+                <HubModelCard key={model.repo_id} model={model} />
+              ))}
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
 
       {untrackedCount > 0 ? (
         <Collapsible>
@@ -377,6 +427,12 @@ const JobsSection: React.FC = () => {
           initialStep={inferenceStep}
         />
       ) : null}
+
+      <ImportModelModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        onImported={refresh}
+      />
     </section>
   );
 };

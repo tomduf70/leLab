@@ -42,7 +42,6 @@ from queue import Empty, Queue
 
 from ..jobs import LogLine, TrainingMetrics, extract_wandb_run_url, parse_metrics_into
 from ..train import TrainingRequest, build_training_command
-from .hf_cloud import WRAPPER_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +56,6 @@ REMOTE_PROJECT_DIR = f"{REMOTE_HOME}/projects/lerobot-test"
 # Direct venv console script — same invocation the user's dashboard used. More
 # robust than `uv run` (which isn't on the non-interactive SSH PATH).
 REMOTE_TRAIN_BIN = f"{REMOTE_PROJECT_DIR}/.venv/bin/lerobot-train"
-# venv interpreter, used to run the checkpoint-uploader wrapper (needs the
-# venv's huggingface_hub). The remote host's HF token (~/.cache/huggingface)
-# authenticates the uploads.
-REMOTE_PYTHON = f"{REMOTE_PROJECT_DIR}/.venv/bin/python"
 REMOTE_JOBS_ROOT = f"{REMOTE_HOME}/.cache/lelab/jobs"
 # HF account the remote host pushes checkpoints to; the LeLab UI lists them
 # from f"{REMOTE_HF_USER}/{job_id}".
@@ -141,9 +136,18 @@ class SshJobRunner:
             config.eval_batch_size = config.eval_n_episodes
 
         # Reuse build_training_command for the flag list, then swap its
-        # `python -m lerobot.scripts.lerobot_train` prefix for the remote venv
-        # console script (stable across the remote's lerobot version).
-        trainer_argv = [REMOTE_TRAIN_BIN, *build_training_command(config, f"{self._remote_dir}/run")[3:]]
+        # `python -m lerobot.scripts.lerobot_train` prefix (3 elements) for the
+        # remote venv console script (stable across the remote's lerobot version).
+        # Append --save_checkpoint_to_hub: lerobot 0.6 pushes each
+        # checkpoints/<step>/ to the Hub repo natively (the replacement for the
+        # old sidecar uploader), which the LeLab UI lists via
+        # _list_cloud_cached(record.hf_repo_id) — same as HF Cloud jobs.
+        trainer_argv = [
+            REMOTE_TRAIN_BIN,
+            *build_training_command(config, f"{self._remote_dir}/run")[3:],
+            "--save_checkpoint_to_hub",
+            "true",
+        ]
 
         self._log_file_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_file = self._log_file_path.open("a", buffering=1)
@@ -177,25 +181,17 @@ class SshJobRunner:
         """Write a launcher script to the remote host and start it detached.
 
         The launcher records its own PID (for liveness checks) and the trainer's
-        exit code (for the final status). The trainer runs under the inlined
-        checkpoint-uploader wrapper (shared with the HF cloud runner): the
-        wrapper spawns the trainer and, while it runs, uploads each new
-        <output_dir>/checkpoints/<step>/ to the Hub model repo so the LeLab UI
-        can browse them live — same `checkpoints/<step>/pretrained_model/`
-        layout the cloud runner produces.
+        exit code (for the final status). It runs the venv `lerobot-train`
+        console script directly: lerobot 0.6 pushes each checkpoints/<step>/ to
+        the Hub repo natively (--save_checkpoint_to_hub), so the old in-process
+        checkpoint-uploader wrapper is gone.
 
-        Both files (launcher + wrapper) ship as base64 over SSH stdin, so no
-        argument or Python source ever has to survive a layer of shell quoting.
+        The launcher ships as base64 over SSH stdin, so no argument ever has to
+        survive a layer of shell quoting.
         """
         assert self._remote_dir and self._remote_log and self._remote_rc and self._remote_pid
-        wrapper_path = f"{self._remote_dir}/wrapper.py"
         script_path = f"{self._remote_dir}/launch.sh"
-        # `python wrapper.py -- <trainer argv>`: the wrapper forwards everything
-        # after `--` to the trainer (see WRAPPER_SOURCE).
-        run_line = (
-            f"{shlex.quote(REMOTE_PYTHON)} {shlex.quote(wrapper_path)} -- "
-            f"{' '.join(shlex.quote(a) for a in trainer_argv)}"
-        )
+        run_line = " ".join(shlex.quote(a) for a in trainer_argv)
         launch_sh = (
             "#!/bin/bash\n"
             f"echo $$ > {shlex.quote(self._remote_pid)}\n"
@@ -204,12 +200,10 @@ class SshJobRunner:
             f"echo $? > {shlex.quote(self._remote_rc)}\n"
         )
         launch_b64 = b64encode(launch_sh.encode()).decode()
-        wrapper_b64 = b64encode(WRAPPER_SOURCE.encode()).decode()
         bootstrap = "\n".join(
             [
                 "set -e",
                 f"mkdir -p {shlex.quote(self._remote_dir)}",
-                f"printf %s {shlex.quote(wrapper_b64)} | base64 -d > {shlex.quote(wrapper_path)}",
                 f"printf %s {shlex.quote(launch_b64)} | base64 -d > {shlex.quote(script_path)}",
                 # Detached: setsid makes it a new session leader (so we can later
                 # signal the whole process group), nohup + full redirect frees the
@@ -227,7 +221,9 @@ class SshJobRunner:
             )
 
     def _start_worker_threads(self, label: str) -> None:
-        self._tail_thread = threading.Thread(target=self._tail_loop, name=f"ssh-job-{label}-logs", daemon=True)
+        self._tail_thread = threading.Thread(
+            target=self._tail_loop, name=f"ssh-job-{label}-logs", daemon=True
+        )
         self._tail_thread.start()
         self._status_thread = threading.Thread(
             target=self._status_poll_loop, name=f"ssh-job-{label}-status", daemon=True
@@ -335,8 +331,8 @@ class SshJobRunner:
         operation (stop() pre-sets it on cancel)."""
         assert self._remote_rc and self._remote_pid
         probe = (
-            f"if [ -f {shlex.quote(self._remote_rc)} ]; then echo \"RC:$(cat {shlex.quote(self._remote_rc)})\"; "
-            f"elif [ -f {shlex.quote(self._remote_pid)} ] && kill -0 \"$(cat {shlex.quote(self._remote_pid)})\" "
+            f'if [ -f {shlex.quote(self._remote_rc)} ]; then echo "RC:$(cat {shlex.quote(self._remote_rc)})"; '
+            f'elif [ -f {shlex.quote(self._remote_pid)} ] && kill -0 "$(cat {shlex.quote(self._remote_pid)})" '
             "2>/dev/null; then echo ALIVE; "
             f"elif [ -f {shlex.quote(self._remote_pid)} ]; then echo CRASHED; "
             "else echo STARTING; fi"
