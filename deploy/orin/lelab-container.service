@@ -1,0 +1,33 @@
+# Service systemd (niveau système) : LeLab en conteneur GPU sur Jetson Orin.
+#
+# Installation :
+#   sudo cp deploy/orin/lelab-container.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now lelab-container.service
+#   # et couper le service natif (uv, sans GPU) qui prend sinon le :8000 :
+#   systemctl --user disable --now lelab.service
+#
+# Logs :   journalctl -u lelab-container -f
+# Stop  :   sudo systemctl stop lelab-container
+#
+# Tourne en root (accès docker garanti). HOME est forcé sur le compte utilisateur
+# pour que run.sh monte le BON cache (~/.cache/huggingface de l'utilisateur).
+[Unit]
+Description=LeLab GPU node (conteneur, Jetson Orin)
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=exec
+Environment=HOME=/home/admin-si
+# nettoie un éventuel conteneur résiduel avant de (re)démarrer
+ExecStartPre=-/usr/bin/docker rm -f lelab
+ExecStart=/home/admin-si/lelab-dev/deploy/orin/run.sh
+ExecStop=/usr/bin/docker stop lelab
+Restart=always
+RestartSec=5
+# l'import lerobot est lourd : laisser le temps de binder :8000
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
