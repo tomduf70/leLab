@@ -54,6 +54,33 @@ HF_ENV=(
   -e HF_LEROBOT_HOME=/root/.cache/huggingface/lerobot
 )
 
+# --- SSH vers robotic-ai (training déporté) -----------------------------------
+# Le runner ssh_remote fait `ssh robotic-ai` via l'alias de ~/.ssh/config (avec
+# ProxyCommand cloudflared). On monte ~/.ssh, ~/.cloudflared (lecture seule, à
+# /host-*) + le binaire cloudflared. Au démarrage (LAUNCH ci-dessous) on RECOPIE
+# ces dossiers dans /root/... avec chown root : le conteneur tourne en root
+# (uid 0) et ssh refuse une config/clé possédée par un autre uid (« bad
+# ownership »). La copie vit dans la couche jetable du conteneur.
+SSH_ARGS=(
+  -v "${HOME}/.ssh":/host-ssh:ro
+  -v /usr/local/bin/cloudflared:/usr/local/bin/cloudflared:ro
+)
+[ -d "${HOME}/.cloudflared" ] && SSH_ARGS+=( -v "${HOME}/.cloudflared":/host-cloudflared:ro )
+
+# Script de démarrage : prépare le SSH root-owned puis lance le serveur.
+# $PORT vient de l'env du conteneur (-e PORT plus bas) ; ici c'est du littéral.
+LAUNCH='
+install -d -m 700 /root/.ssh
+cp -a /host-ssh/. /root/.ssh/ 2>/dev/null || true
+chown -R root:root /root/.ssh && chmod 700 /root/.ssh && chmod 600 /root/.ssh/* 2>/dev/null || true
+if [ -d /host-cloudflared ]; then
+  install -d -m 700 /root/.cloudflared
+  cp -a /host-cloudflared/. /root/.cloudflared/ 2>/dev/null || true
+  chown -R root:root /root/.cloudflared
+fi
+cd /opt/lelab && exec uvicorn lelab.server:app --host 0.0.0.0 --port "$PORT"
+'
+
 # -it seulement en interactif (une unit systemd n'a pas de TTY)
 TTY_ARGS=()
 [ -t 1 ] && TTY_ARGS=(-it)
@@ -64,7 +91,9 @@ exec docker run --rm "${TTY_ARGS[@]}" \
   --network host \
   "${HW_ARGS[@]}" \
   "${HF_ENV[@]}" \
+  "${SSH_ARGS[@]}" \
+  -e PORT="${PORT}" \
   -v "${REPO}":/opt/lelab \
   -v "${HF_CACHE}":/root/.cache/huggingface \
   "${IMAGE}" \
-  bash -lc "cd /opt/lelab && exec uvicorn lelab.server:app --host 0.0.0.0 --port ${PORT}"
+  bash -lc "${LAUNCH}"
