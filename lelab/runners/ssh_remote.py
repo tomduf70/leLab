@@ -374,11 +374,22 @@ class SshJobRunner:
         if self._remote_pid is None:
             return
         # Signal the whole process group (setsid made the launcher a session
-        # leader, so its PID is the PGID): TERM, then KILL after a grace.
+        # leader, so its PID is the PGID). But the trainer can re-parent into a
+        # *different* process group (torch DataLoader workers / accelerate do
+        # this), which leaves it orphaned and still running after `kill -PGID`
+        # — observed in practice: a user hit STOP and the run kept going. So
+        # also match the trainer by its unique job id, which is embedded in the
+        # command line (--output_dir and --policy.repo_id both contain it).
+        # TERM, then KILL after a grace.
+        jid = shlex.quote(self._job_id)
         kill = (
             f"P=$(cat {shlex.quote(self._remote_pid)} 2>/dev/null); "
-            'if [ -n "$P" ]; then kill -TERM -"$P" 2>/dev/null; '
-            'sleep 3; kill -KILL -"$P" 2>/dev/null; fi; true'
+            'if [ -n "$P" ]; then kill -TERM -"$P" 2>/dev/null; fi; '
+            f"pkill -TERM -f {jid} 2>/dev/null; "
+            "sleep 3; "
+            'if [ -n "$P" ]; then kill -KILL -"$P" 2>/dev/null; fi; '
+            f"pkill -KILL -f {jid} 2>/dev/null; "
+            "true"
         )
         try:
             self._run_ssh([kill], timeout=30)
