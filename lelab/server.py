@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
@@ -36,10 +36,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from . import datasets as dataset_browser
+# Import our custom recording functionality
+from . import datasets as dataset_browser, record as _record
 
 # Import our custom calibration functionality
 from .calibrate import CalibrationRequest, calibration_manager
+from .episode_media import DatasetNotFoundError, EpisodeNotFoundError
 from .jobs import (
     JobAlreadyRunningError,
     JobNotFoundError,
@@ -47,8 +49,6 @@ from .jobs import (
     JobTarget,
     job_registry,
 )
-
-# Import our custom recording functionality
 from .record import (
     DatasetInfoRequest,
     RecordingRequest,
@@ -379,12 +379,86 @@ def hf_auth_login(body: HfLoginBody):
 
 
 @app.get("/datasets")
-def datasets_list():
+def datasets_list(scope: str = "all"):
     """List datasets available to the user — Hub-owned + local cache.
 
-    Each entry carries a `source` field: "local", "hub", or "both".
+    Each entry carries a `source` field: "local", "hub", or "both". Pass
+    `scope=local` for a local-only listing (a pure filesystem scan, no Hub
+    call) — for lightweight pollers that only need what exists on disk.
     """
+    if scope == "local":
+        return dataset_browser.list_local_datasets_with_source()
     return dataset_browser.list_all_datasets()
+
+
+@app.get("/dataset-episodes")
+def dataset_episodes(repo_id: str):
+    """List the episodes of a local dataset."""
+    return dataset_browser.handle_list_episodes(repo_id)
+
+
+@app.get("/dataset-episode")
+def dataset_episode(repo_id: str, episode_index: int):
+    """One episode's metadata and per-camera video windows."""
+    return dataset_browser.handle_episode_detail(repo_id, episode_index)
+
+
+@app.get("/dataset-motion")
+def dataset_motion(repo_id: str, episode_index: int):
+    """Per-frame aggregate joint motion (sum of absolute joint deltas)."""
+    return dataset_browser.handle_episode_motion(repo_id, episode_index)
+
+
+@app.get("/dataset-thumbnails")
+def dataset_thumbnails(repo_id: str, episode_index: int, camera: str | None = None, count: int = 12):
+    """Evenly-spaced film-strip thumbnails, decoded in a single pass over the mp4."""
+    return dataset_browser.handle_episode_thumbnails(repo_id, episode_index, camera, count)
+
+
+@app.get("/dataset-frame")
+def dataset_frame(
+    repo_id: str,
+    episode_index: int,
+    camera: str | None = None,
+    frame_index: int = 0,
+    max_width: int | None = None,
+):
+    """A single decoded frame as a PNG."""
+    try:
+        png = dataset_browser.load_episode_frame_png(repo_id, episode_index, camera, frame_index, max_width)
+    except (DatasetNotFoundError, EpisodeNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # A frame is immutable for a given (dataset, episode, camera, index), and the
+    # scrubber re-requests the same ones constantly, so let the browser cache it.
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@app.get("/dataset-video")
+def dataset_video(repo_id: str, camera: str, chunk: int = 0, file: int = 0):
+    """One camera's mp4, served whole for in-page playback.
+
+    Addressed by chunk/file rather than by episode: several episodes share a
+    file, so this URL stays stable as the viewer pages between them and the
+    browser reuses what it already buffered. Callers get the episode's window
+    from /dataset-episode and seek to it. FileResponse answers Range requests,
+    so the browser does its own seeking rather than us transcoding a cut.
+    """
+    try:
+        path = dataset_browser.locate_video_file(repo_id, camera, chunk, file)
+    except (DatasetNotFoundError, EpisodeNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # content_disposition_type="inline" is load-bearing: the default is
+    # "attachment", which makes the browser download the file rather than play it.
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/ws-test")
@@ -441,6 +515,22 @@ def stop_recording():
 def recording_status():
     """Get the current recording status"""
     return handle_recording_status()
+
+
+@app.get("/camera-feed/{cam_key}")
+def camera_feed(cam_key: str):
+    """Live MJPEG preview of one configured camera during an active recording.
+
+    Browsers render `multipart/x-mixed-replace` directly in an <img>, so the
+    frontend just points an <img> at this URL. Only valid while a session is
+    active; the generator ends itself when recording stops.
+    """
+    if not _record.recording_active:
+        raise HTTPException(status_code=409, detail="No active recording session")
+    return StreamingResponse(
+        _record.camera_feed_frames(cam_key),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.post("/recording-exit-early")
@@ -784,7 +874,9 @@ def run_update():
     return handle_run_update()
 
 
-# Replay is rendered by the embedded lerobot/visualize_dataset Space; no backend routes needed.
+# Datasets with files on disk are browsed locally (see the /dataset-* routes above).
+# Hub-only datasets have nothing here to decode, so the frontend still hands those
+# off to the lerobot/visualize_dataset Space.
 
 
 # ============================================================================
@@ -989,6 +1081,28 @@ def _generic_cv2_cameras(backend) -> list[dict[str, Any]]:
     return cameras
 
 
+@contextlib.contextmanager
+def _windows_com_initialized():
+    """Initialize COM for the current Windows worker thread when available."""
+    try:
+        import comtypes
+    except ImportError:
+        yield
+        return
+
+    try:
+        comtypes.CoInitialize()
+    except OSError as e:
+        logger.warning("Windows COM initialization failed: %s", e)
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        comtypes.CoUninitialize()
+
+
 def _windows_cameras() -> list[dict[str, Any]]:
     """Enumerate Windows cameras with their real DirectShow names.
 
@@ -998,16 +1112,17 @@ def _windows_cameras() -> list[dict[str, Any]]:
     frontend match each index to the browser's ``MediaDeviceInfo.label`` for the
     live preview. Falls back to generic names if pygrabber is unavailable.
     """
-    try:
-        from pygrabber.dshow_graph import FilterGraph
+    with _windows_com_initialized():
+        try:
+            from pygrabber.dshow_graph import FilterGraph
 
-        names = FilterGraph().get_input_devices()
-    except Exception as e:  # ImportError, or a COM/DirectShow failure
-        logger.warning("pygrabber unavailable; using generic camera names: %s", e)
-        import cv2
+            names = FilterGraph().get_input_devices()
+        except Exception as e:  # ImportError, or a COM/DirectShow failure
+            logger.warning("pygrabber unavailable; using generic camera names: %s", e)
+            import cv2
 
-        return _generic_cv2_cameras(cv2.CAP_DSHOW)
-    return [{"index": i, "name": name, "available": True} for i, name in enumerate(names)]
+            return _generic_cv2_cameras(cv2.CAP_DSHOW)
+        return [{"index": i, "name": name, "available": True} for i, name in enumerate(names)]
 
 
 def _v4l2_camera_name(index: int) -> str | None:

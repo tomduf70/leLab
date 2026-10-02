@@ -17,14 +17,17 @@ const resolveInitialBaseUrl = (): string => {
   if (typeof window === "undefined") return DEFAULT_LOCALHOST;
 
   const fromQuery = new URLSearchParams(window.location.search).get("api");
-  if (fromQuery) {
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  for (const candidate of [fromQuery, stored]) {
+    if (!candidate) continue;
     try {
-      new URL(fromQuery);
-      const clean = fromQuery.replace(/\/$/, "");
+      const url = new URL(candidate);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      const clean = url.href.replace(/\/$/, "");
       window.localStorage.setItem(STORAGE_KEY, clean);
       return clean;
     } catch {
-      console.warn("Invalid `api` query param, ignoring:", fromQuery);
+      console.warn("Invalid API URL, ignoring:", candidate);
     }
   }
 
@@ -34,7 +37,7 @@ const resolveInitialBaseUrl = (): string => {
   // remotely. Defaulting to the current origin avoids hard-coding localhost,
   // which broke API calls (and silently forced the HF auth banner) behind a
   // cloudflared tunnel.
-  return window.localStorage.getItem(STORAGE_KEY) || window.location.origin;
+  return window.location.origin;
 };
 
 export const ApiProvider: React.FC<{ children: ReactNode }> = ({

@@ -15,6 +15,30 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    "pos,expected",
+    [
+        (-5, False),  # negative — bad frame
+        (0, False),  # lower bound is exclusive (old check: pos > 0)
+        (1, True),
+        (100, True),
+        (2000, True),
+        (4095, True),  # encoder max
+        (4999, True),
+        (5000, False),  # upper bound is exclusive (old check: pos < 5000)
+        (6000, False),  # extreme — bad frame
+    ],
+)
+def test_is_valid_position_boundaries(pos, expected) -> None:
+    """Pins the plausible-encoder-range filter that replaced three duplicated
+    inline `pos > 0 and pos < 5000` checks. Boundaries are exclusive on both ends."""
+    from lelab.calibrate import _is_valid_position
+
+    assert _is_valid_position(pos) is expected
+
 
 def test_calibration_status_defaults_to_idle() -> None:
     from lelab.calibrate import CalibrationStatus
@@ -72,3 +96,32 @@ def test_calibration_manager_rejects_double_start_via_message() -> None:
     )
     assert result.get("success") is False
     assert "already" in result.get("message", "").lower()
+
+
+def test_cleanup_device_force_releases_and_clears_when_disconnect_fails() -> None:
+    """A failed device.disconnect() must still force-close the port and clear the
+    device handle — otherwise the COM port stays busy and blocks the next run."""
+    from lelab.calibrate import CalibrationManager
+
+    class PortHandler:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def closePort(self) -> None:  # noqa: N802 - mirrors LeRobot port handler API
+            self.closed = True
+
+    class Device:
+        def __init__(self) -> None:
+            self.bus = type("Bus", (), {"port_handler": PortHandler()})()
+
+        def disconnect(self) -> None:
+            raise RuntimeError("Failed to write 'Torque_Enable' on id_=6")
+
+    mgr = CalibrationManager()
+    device = Device()
+    mgr.device = device
+
+    mgr._cleanup_device()
+
+    assert device.bus.port_handler.closed is True  # force-released despite failure
+    assert mgr.device is None  # handle cleared so a new calibration can start

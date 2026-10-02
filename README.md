@@ -41,6 +41,10 @@ A page will automatically open in your browser and you are ready to go.
       <td>Capture episodes into a LeRobotDataset, with cameras.</td>
     </tr>
     <tr>
+      <td>🔎 <b>Browse</b></td>
+      <td>Watch the episodes of a dataset on disk — every camera, frame by frame, with a joint-motion trace. No upload required.</td>
+    </tr>
+    <tr>
       <td>🧠 <b>Train</b></td>
       <td>Kick off a LeRobot training job, watch logs live.</td>
     </tr>
@@ -75,6 +79,17 @@ lelab --dev
 ```
 
 Vite on `:8080`, uvicorn `--reload` on `:8000`.
+
+For frontend changes, use Node.js 22 and rebuild the bundle before submitting your PR:
+
+```bash
+cd frontend
+npm ci
+npm run build
+git add dist
+```
+
+Commit `frontend/dist` alongside the source changes. Python installations serve this bundle; the required Quality check verifies that it is up to date.
 
 <div align="center">
 <sub>Originally hacked together by <a href="https://www.linkedin.com/posts/nicolas-rabault-_lerobot-hackathon-lerobot-ugcPost-7341065019368828930-jTnl/">Team LeLab at the 2025 LeRobot Worldwide Hackathon 🏆</a>, now maintained by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>

@@ -97,15 +97,11 @@ const Landing = () => {
   };
 
   const handlePickExisting = (item: DatasetItem) => {
+    // Anything with files on disk opens in the local episode browser; upload and
+    // delete are reachable from there. A Hub-only dataset has no videos here to
+    // decode, so it still goes out to the visualize_dataset Space.
     if (item.source === "local" || item.source === "both") {
-      navigate("/upload", {
-        state: {
-          datasetInfo: {
-            dataset_repo_id: item.repo_id,
-            source: item.source,
-          },
-        },
-      });
+      navigate(`/edit-dataset?dataset=${encodeURIComponent(item.repo_id)}`);
       return;
     }
     openHubViewer(item.repo_id, item.private);
@@ -241,7 +237,10 @@ const Landing = () => {
             deleteRobot={deleteRobot}
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2">
+            <div
+              className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2"
+              data-tour="dataset-picker"
+            >
               <h3 className="font-semibold text-lg text-left h-10 flex items-center">
                 Dataset
               </h3>
@@ -266,7 +265,10 @@ const Landing = () => {
                 </Button>
               </DatasetPicker>
             </div>
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2">
+            <div
+              className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2"
+              data-tour="training-entry"
+            >
               <h3 className="font-semibold text-lg text-left h-10 flex items-center">
                 Create a model
               </h3>

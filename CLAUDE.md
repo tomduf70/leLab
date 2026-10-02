@@ -25,7 +25,7 @@ lelab          # uvicorn on :8000, serves built frontend at /, opens browser
 lelab --dev    # spawns Vite dev (:8080) + uvicorn --reload (:8000), opens browser to :8080
 ```
 
-When `frontend/**` (excluding `frontend/dist/**`) changes on `main`, [`.github/workflows/build_frontend.yml`](.github/workflows/build_frontend.yml) auto-rebuilds `frontend/dist/` and commits it back. You can still build locally before committing if you want to test the production bundle, but it's no longer required. `lelab --dev` serves directly from Vite, no rebuild needed.
+Frontend PRs must include the rebuilt `frontend/dist/` bundle: use Node.js 22 and run `cd frontend && npm ci && npm run build`, then commit `dist/` alongside the source changes. The required [Quality workflow](.github/workflows/quality.yml) rebuilds and rejects stale bundles before merge. `lelab --dev` serves directly from Vite, so development itself needs no rebuild.
 
 Run the Python tests with `pytest` (config in [pyproject.toml](pyproject.toml); install dev deps via `pip install -e ".[test]"`). Tests live in [tests/](tests/) and cover request schemas, pure helpers, and idle/mutex branches of the feature handlers — subprocess/thread happy paths and HF Jobs integration are deliberately not unit-tested. Lint with `ruff check` / `ruff format` (config in [pyproject.toml](pyproject.toml)). There is no Python build step; for end-to-end validation, run `lelab` and exercise endpoints (curl or via the frontend).
 
@@ -39,6 +39,9 @@ Run the Python tests with `pytest` (config in [pyproject.toml](pyproject.toml); 
 - [teleoperate.py](lelab/teleoperate.py) — leader→follower teleoperation (wraps `lerobot.teleoperate`).
 - [calibrate.py](lelab/calibrate.py) — step-by-step web calibration with a `CalibrationManager` singleton and `_step_complete` threading.Event.
 - [train.py](lelab/train.py) — wraps the LeRobot training CLI as a subprocess (psutil for lifecycle, queue for log streaming).
+- [datasets.py](lelab/datasets.py) — dataset listing (local cache + Hub, merged under a `source` field) plus the episode-browsing handlers behind `/dataset-episodes`, `/dataset-episode`, `/dataset-frame`, `/dataset-thumbnails`, `/dataset-motion` and `/dataset-video`.
+- [episode_media.py](lelab/episode_media.py) — reads the LeRobot v3.0 on-disk layout (`meta/episodes/*.parquet` + `videos/`) and decodes frames with PyAV. Deliberately does **not** go through `LeRobotDataset`, so browsing a dataset never builds a robot config or imports torch. Several episodes share one mp4, so locating an episode resolves both the file and the `from_/to_timestamp` window inside it — which is why `/dataset-video` is addressed by chunk/file rather than by episode.
+- [dataset_repair.py](lelab/dataset_repair.py) — rebuilds `meta/episodes/` for a recording interrupted before `LeRobotDataset.finalize()` ran. Without an episode index LeRobot reads a local dataset as "not downloaded yet" and fetches it from the Hub, which 404s for a dataset that was never pushed. Call `repair_local_dataset(repo_id)` before opening a recorded dataset with `LeRobotDataset`.
 - [utils/config.py](lelab/utils/config.py) — shared paths and persistence: calibration JSON, saved ports, saved config selections. **Import shared constants from here, do not hardcode paths in feature modules.**
 
 ### State model
