@@ -36,6 +36,7 @@ import shlex
 import subprocess
 import threading
 import time
+import urllib.request
 from base64 import b64encode
 from pathlib import Path
 from queue import Empty, Queue
@@ -75,6 +76,24 @@ _TAIL_RECONNECT_BACKOFF_S = 5.0
 # before we treat it as a failed launch. The bootstrap already confirmed the
 # detached process forked, so this only guards against it dying instantly.
 _STARTING_GRACE_S = 30.0
+
+
+# Wake-on-demand: robotic-ai sits on a smart plug (BIOS set to boot on AC
+# restore). If SSH doesn't answer at start, POST this Home Assistant webhook to
+# power it on, then wait for SSH. The URL is a secret, so it lives in a local
+# file outside git (mounted read-only into the Orin container); no file → no
+# wake attempt, and start() fails as before.
+WAKE_URL_FILE = Path.home() / ".config" / "lelab" / "robotic_ai_wake_url"
+_WAKE_BOOT_TIMEOUT_S = 120.0
+_WAKE_PROBE_INTERVAL_S = 5.0
+
+
+def _read_wake_url() -> str | None:
+    try:
+        url = WAKE_URL_FILE.read_text().strip()
+    except OSError:
+        return None
+    return url if url.startswith(("http://", "https://")) else None
 
 
 def _remote_job_dir(job_id: str) -> str:
@@ -152,10 +171,61 @@ class SshJobRunner:
         self._log_file_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_file = self._log_file_path.open("a", buffering=1)
 
-        logger.info("Launching SSH job %s on %s: %s", job_id, SSH_HOST, " ".join(trainer_argv))
+        if self._ssh_reachable():
+            self._launch_and_watch(trainer_argv)
+            return
+
+        wake_url = _read_wake_url()
+        if wake_url is None:
+            raise RuntimeError(f"{SSH_HOST} is unreachable over SSH (no wake URL configured)")
+        # Booting takes minutes — don't hold the HTTP request. The job shows as
+        # running (no terminal state yet) with progress lines in its log.
+        threading.Thread(
+            target=self._wake_then_launch,
+            args=(wake_url, trainer_argv),
+            name=f"ssh-job-{job_id}-wake",
+            daemon=True,
+        ).start()
+
+    def _launch_and_watch(self, trainer_argv: list[str]) -> None:
+        logger.info("Launching SSH job %s on %s: %s", self._job_id, SSH_HOST, " ".join(trainer_argv))
         self._launch_remote(trainer_argv)
         self._started_at = time.time()
-        self._start_worker_threads(job_id)
+        assert self._job_id is not None
+        self._start_worker_threads(self._job_id)
+
+    def _ssh_reachable(self) -> bool:
+        try:
+            return self._run_ssh(["true"], timeout=20).returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+
+    def _wake_then_launch(self, wake_url: str, trainer_argv: list[str]) -> None:
+        self._handle_log_line(f"[lelab] {SSH_HOST} is off — powering it on via Home Assistant…")
+        try:
+            # Explicit UA: Cloudflare (in front of Home Assistant) 403s the
+            # default "Python-urllib/x.y" agent as a bot.
+            req = urllib.request.Request(  # noqa: S310 — https from local config
+                wake_url, method="POST", headers={"User-Agent": "lelab-wake/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=20):  # noqa: S310
+                pass
+        except Exception as exc:
+            self._set_terminal(1, f"Could not power on {SSH_HOST}: {exc}")
+            return
+        deadline = time.time() + _WAKE_BOOT_TIMEOUT_S
+        while not self._stop_event.wait(_WAKE_PROBE_INTERVAL_S):
+            if self._ssh_reachable():
+                self._handle_log_line(f"[lelab] {SSH_HOST} is up — launching training.")
+                try:
+                    self._launch_and_watch(trainer_argv)
+                except Exception as exc:
+                    self._set_terminal(1, str(exc))
+                return
+            if time.time() > deadline:
+                self._set_terminal(1, f"{SSH_HOST} did not answer SSH within {int(_WAKE_BOOT_TIMEOUT_S)}s")
+                return
+            self._handle_log_line(f"[lelab] Waiting for {SSH_HOST} to boot…")
 
     def reattach(self, job_id: str) -> None:
         """Take over an already-running remote job after an Orin restart.

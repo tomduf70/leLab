@@ -66,6 +66,9 @@ SSH_ARGS=(
   -v /usr/local/bin/cloudflared:/usr/local/bin/cloudflared:ro
 )
 [ -d "${HOME}/.cloudflared" ] && SSH_ARGS+=( -v "${HOME}/.cloudflared":/host-cloudflared:ro )
+# Config locale LeLab hors git (ex. robotic_ai_wake_url : webhook Home Assistant
+# qui allume la prise du PC d'entraînement). root lit sans souci un fichier 600.
+[ -d "${HOME}/.config/lelab" ] && SSH_ARGS+=( -v "${HOME}/.config/lelab":/root/.config/lelab:ro )
 
 # Script de démarrage : prépare le SSH root-owned puis lance le serveur.
 # $PORT vient de l'env du conteneur (-e PORT plus bas) ; ici c'est du littéral.
