@@ -82,6 +82,7 @@ from .teleoperate import (
 from .train import TrainingRequest
 from .update import handle_run_update, handle_update_check
 from .utils import config
+from .utils.cameras import resolve_camera_index, stable_id_for_index
 from .utils.config import (
     FOLLOWER_CONFIG_PATH,
     LEADER_CONFIG_PATH,
@@ -1145,7 +1146,14 @@ def _linux_cameras() -> list[dict[str, Any]]:
         cap.release()
         if not opened:
             continue
-        cameras.append({"index": i, "name": _v4l2_camera_name(i) or f"Camera {i}", "available": True})
+        cameras.append(
+            {
+                "index": i,
+                "name": _v4l2_camera_name(i) or f"Camera {i}",
+                "stable_id": stable_id_for_index(i),
+                "available": True,
+            }
+        )
     return cameras
 
 
@@ -1217,6 +1225,7 @@ _STREAM_DEFAULT_QUALITY = 70
 async def camera_stream(
     request: Request,
     camera_index: int,
+    stable_id: str | None = None,
     width: int = _STREAM_DEFAULT_WIDTH,
     height: int = _STREAM_DEFAULT_HEIGHT,
     fps: int = _STREAM_DEFAULT_FPS,
@@ -1229,12 +1238,18 @@ async def camera_stream(
     read on the host and streamed through the tunnel. Preview-only — this opens the
     device with cv2, so the frontend must drop the stream before recording (lerobot
     needs exclusive access); the generator releases the capture the moment the
-    client disconnects. Returns 503 if the camera can't be opened.
+    client disconnects. Returns 503 if the camera can't be opened. When
+    ``stable_id`` is given it wins over ``camera_index`` (see utils.cameras).
     """
     try:
         import cv2
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="OpenCV not available") from exc
+
+    try:
+        camera_index = resolve_camera_index({"camera_index": camera_index, "stable_id": stable_id})
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     backend = _cv2_capture_backend()
     cap = await asyncio.to_thread(cv2.VideoCapture, camera_index, backend)

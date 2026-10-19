@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { VideoOff } from "lucide-react";
 import { useCameraStream } from "@/hooks/useCameraStream";
+import { cameraStreamUrl } from "@/lib/cameraStream";
 import { useApi } from "@/contexts/ApiContext";
 
 interface CameraFeedProps {
@@ -12,6 +13,8 @@ interface CameraFeedProps {
    * ⇒ no fallback, just the placeholder.
    */
   cameraIndex?: number;
+  /** udev stable path; when set the backend stream resolves the index from it. */
+  stableId?: string;
   /** Optional caption shown under the feed. */
   label?: string;
 }
@@ -22,7 +25,7 @@ interface CameraFeedProps {
  * falls back to the host's backend MJPEG stream so the feed still works through the
  * tunnel.
  */
-const CameraFeed: React.FC<CameraFeedProps> = ({ deviceId, cameraIndex, label }) => {
+const CameraFeed: React.FC<CameraFeedProps> = ({ deviceId, cameraIndex, stableId, label }) => {
   const { baseUrl } = useApi();
   const { videoRef, hasError } = useCameraStream(deviceId, false);
   const [streamFailed, setStreamFailed] = useState(false);
@@ -43,7 +46,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ deviceId, cameraIndex, label })
           />
         ) : showStream ? (
           <img
-            src={`${baseUrl}/camera-stream/${cameraIndex}`}
+            src={cameraStreamUrl(baseUrl, cameraIndex, stableId)}
             alt={label ?? "Camera stream"}
             onError={() => setStreamFailed(true)}
             className="w-full h-full object-cover"

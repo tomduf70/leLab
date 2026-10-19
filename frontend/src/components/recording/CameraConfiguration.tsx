@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAvailableCameras } from "@/hooks/useAvailableCameras";
 import { useApi } from "@/contexts/ApiContext";
 import { useCameraStream } from "@/hooks/useCameraStream";
+import { cameraStreamUrl } from "@/lib/cameraStream";
 
 // Sentinels distinguish "leave unset" (auto-detect / platform default) from an
 // explicit choice. Radix Select disallows an empty-string value, so we map these
@@ -44,6 +45,7 @@ export interface CameraConfig {
   type: string;
   camera_index?: number; // cv2 index — what the recorder opens
   device_id: string; // Browser deviceId matched to the cv2 index by AVFoundation localizedName
+  stable_id?: string; // Linux /dev/v4l/by-id path; the backend re-resolves camera_index from it
   width: number;
   height: number;
   fps?: number;
@@ -86,8 +88,11 @@ const CameraConfiguration: React.FC<CameraConfigurationProps> = ({
     if (availableCameras.length === 0 || cameras.length === 0) return;
     let changed = false;
     const refreshed = cameras.map((cam) => {
-      if (!cam.device_id) return cam;
-      const match = availableCameras.find((m) => m.deviceId === cam.device_id);
+      const match =
+        (cam.stable_id &&
+          availableCameras.find((m) => m.stableId === cam.stable_id)) ||
+        (cam.device_id &&
+          availableCameras.find((m) => m.deviceId === cam.device_id));
       if (match && match.index !== cam.camera_index) {
         changed = true;
         return { ...cam, camera_index: match.index };
@@ -131,7 +136,8 @@ const CameraConfiguration: React.FC<CameraConfigurationProps> = ({
     const isDuplicate = cameras.some(
       (cam) =>
         cam.camera_index === selectedCamera.index ||
-        (selectedCamera.deviceId && cam.device_id === selectedCamera.deviceId),
+        (selectedCamera.deviceId && cam.device_id === selectedCamera.deviceId) ||
+        (selectedCamera.stableId && cam.stable_id === selectedCamera.stableId),
     );
     if (isDuplicate) {
       toast({
@@ -148,6 +154,7 @@ const CameraConfiguration: React.FC<CameraConfigurationProps> = ({
       type: "opencv",
       camera_index: selectedCamera.index,
       device_id: selectedCamera.deviceId,
+      stable_id: selectedCamera.stableId,
       width: 640,
       height: 480,
       fps: 30,
@@ -372,7 +379,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           />
         ) : showStream ? (
           <img
-            src={`${baseUrl}/camera-stream/${camera.camera_index}`}
+            src={cameraStreamUrl(baseUrl, camera.camera_index, camera.stable_id)}
             alt={camera.name}
             onError={() => setStreamFailed(true)}
             className="w-full h-full object-cover"

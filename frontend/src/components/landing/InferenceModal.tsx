@@ -156,8 +156,8 @@ const InferenceModal: React.FC<Props> = ({
   }, [open, baseUrl, fetchWithHeaders, jobId, selectedStep]);
 
   // If the selected robot has cameras whose names match a policy-expected
-  // camera, auto-bind them. Prefer matching by browser device_id (stable
-  // across cv2 index drift); fall back to the saved camera_index.
+  // camera, auto-bind them. Prefer matching by udev stable_id or browser
+  // device_id (stable across cv2 index drift); fall back to the saved camera_index.
   useEffect(() => {
     if (!policyConfig) return;
     const robotCams = robot?.cameras ?? [];
@@ -172,6 +172,8 @@ const InferenceModal: React.FC<Props> = ({
         );
         if (!robotCam) continue;
         const live =
+          (robotCam.stable_id &&
+            availableCameras.find((c) => c.stableId === robotCam.stable_id)) ||
           (robotCam.device_id &&
             availableCameras.find((c) => c.deviceId === robotCam.device_id)) ||
           availableCameras.find((c) => c.index === robotCam.camera_index);
@@ -212,7 +214,7 @@ const InferenceModal: React.FC<Props> = ({
     setSubmitting(true);
     await new Promise((r) => setTimeout(r, 300));
     const cameraDict: Record<string, {
-      type: string; camera_index?: number; width: number; height: number; fps?: number;
+      type: string; camera_index?: number; stable_id?: string; width: number; height: number; fps?: number;
     }> = {};
     for (const [name, dims] of Object.entries(policyConfig.image_features)) {
       const idx = cameraBindings[name];
@@ -220,6 +222,7 @@ const InferenceModal: React.FC<Props> = ({
       cameraDict[name] = {
         type: "opencv",
         camera_index: idx,
+        stable_id: availableCameras.find((c) => c.index === idx)?.stableId,
         width: dims.width,
         height: dims.height,
         fps: DEFAULT_FPS,

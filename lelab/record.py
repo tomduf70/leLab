@@ -32,6 +32,7 @@ from lerobot.scripts.lerobot_record import RecordConfig
 from lerobot.teleoperators.so_leader import SO101LeaderConfig
 
 from .dataset_repair import DatasetRepairError, repair_local_dataset
+from .utils.cameras import resolve_camera_index
 from .utils.config import setup_calibration_files, with_lelab_tag
 from .utils.devices import safe_disconnect_device
 
@@ -150,9 +151,10 @@ def _build_camera_configs(cameras: dict, default_backend) -> dict:
         backend_name = camera_data.get("backend")
         backend = Cv2Backends[backend_name] if backend_name else default_backend
         fourcc = camera_data.get("fourcc") or None
+        index = resolve_camera_index(camera_data)
 
         camera_configs[camera_name] = OpenCVCameraConfig(
-            index_or_path=camera_data.get("camera_index", 0),
+            index_or_path=index,
             backend=backend,
             fps=camera_data.get("fps"),
             width=camera_data.get("width"),
@@ -161,7 +163,7 @@ def _build_camera_configs(cameras: dict, default_backend) -> dict:
         )
         logger.info(
             f"✅ CAMERA CONFIG: {camera_name} -> OpenCVCameraConfig("
-            f"index={camera_data.get('camera_index')}, backend={backend.name}, "
+            f"index={index}, backend={backend.name}, "
             f"{camera_data.get('width')}x{camera_data.get('height')}@{camera_data.get('fps')}fps, "
             f"fourcc={fourcc})"
         )

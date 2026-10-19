@@ -171,6 +171,7 @@ const Landing = () => {
         acc[cam.name] = {
           type: cam.type,
           camera_index: cam.camera_index,
+          ...(cam.stable_id ? { stable_id: cam.stable_id } : {}),
           width: cam.width,
           height: cam.height,
           fps: cam.fps,
@@ -184,6 +185,7 @@ const Landing = () => {
         {
           type: string;
           camera_index?: number;
+          stable_id?: string;
           width: number;
           height: number;
           fps?: number;

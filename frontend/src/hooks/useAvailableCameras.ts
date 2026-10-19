@@ -5,6 +5,8 @@ export interface AvailableCamera {
   index: number;
   name: string;
   deviceId: string;
+  /** Linux udev /dev/v4l/by-id path — survives cv2 index reordering. */
+  stableId?: string;
   available: boolean;
 }
 
@@ -52,6 +54,7 @@ export function useAvailableCameras({
       const backendCams: {
         index: number;
         name?: string;
+        stable_id?: string | null;
         available: boolean;
       }[] = data.cameras ?? [];
 
@@ -76,6 +79,7 @@ export function useAvailableCameras({
           index: cam.index,
           name: label,
           deviceId: match?.deviceId ?? "",
+          stableId: cam.stable_id ?? undefined,
           available: cam.available,
         };
       });

@@ -37,6 +37,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .utils.cameras import resolve_camera_index
 from .utils.config import setup_follower_calibration_file
 
 logger = logging.getLogger(__name__)
@@ -188,11 +189,14 @@ def _rollout_inference_args(policy_path: str) -> list[str]:
 
 
 def _format_cameras_arg(cameras: dict[str, dict[str, Any]]) -> str:
-    """Convert {name: {type, camera_index, width, height, fps}} into
+    """Convert {name: {type, camera_index, stable_id, width, height, fps}} into
     lerobot's CLI dict syntax. The frontend key `camera_index` is
-    remapped to lerobot's `index_or_path`."""
+    remapped to lerobot's `index_or_path`, re-resolved from `stable_id`
+    (which lerobot doesn't know and is dropped)."""
     parts = []
     for name, cfg in cameras.items():
+        cfg = {**cfg, "camera_index": resolve_camera_index(cfg)}
+        cfg.pop("stable_id", None)
         remapped = {
             ("index_or_path" if k == "camera_index" else k): v for k, v in cfg.items() if v is not None
         }
