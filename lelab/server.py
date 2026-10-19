@@ -1284,7 +1284,10 @@ async def camera_stream(
                 )
                 await asyncio.sleep(frame_interval)
         finally:
-            await asyncio.to_thread(cap.release)
+            # Synchronous on purpose: on client disconnect Starlette cancels this
+            # generator, and an awaited release would be cancelled too — leaking
+            # the device so the next preview/recording can't open it.
+            cap.release()
 
     return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
