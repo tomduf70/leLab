@@ -189,3 +189,12 @@ def test_start_teleoperation_disconnects_follower_when_leader_fails(
     # The already-connected follower must have been cleaned up.
     assert created["follower"].disconnected is True
     assert teleop.teleoperation_active is False
+
+
+def test_is_orphaned_only_after_grace_without_viewers() -> None:
+    from lelab.teleoperate import _is_orphaned
+
+    assert not _is_orphaned(True, last_watched=0, now=1000, timeout=60)
+    assert not _is_orphaned(False, last_watched=0, now=59, timeout=60)
+    assert _is_orphaned(False, last_watched=0, now=61, timeout=60)
+    assert not _is_orphaned(False, last_watched=0, now=1000, timeout=0)

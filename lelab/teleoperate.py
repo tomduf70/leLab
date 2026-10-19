@@ -14,6 +14,7 @@
 
 import logging
 import math
+import os
 import threading
 import time
 from typing import Any
@@ -35,6 +36,22 @@ current_robot = None
 current_teleop = None
 # Guards the start path; the worker owns disconnect so stop() does not race.
 _state_lock = threading.Lock()
+
+# A teleoperation nobody watches is stopped after this many seconds. Leaving
+# the page normally stops it from the frontend, but that last request is lost
+# when the browser itself goes away (closing an --app window quits Chromium, a
+# crash, a killed launcher): the arms' ports stayed held and the next start was
+# refused as "already active". "Watched" = at least one /ws/joint-data client;
+# the grace period outlasts the frontend's reconnect backoff (max 30 s), so a
+# network blip through a tunnel doesn't stop the arm. 0 disables the watchdog.
+ORPHAN_TIMEOUT_S = float(os.environ.get("LELAB_TELEOP_ORPHAN_TIMEOUT", "60"))
+
+
+def _is_orphaned(
+    has_viewers: bool, last_watched: float, now: float, timeout: float = ORPHAN_TIMEOUT_S
+) -> bool:
+    """True when nobody has watched the session for longer than `timeout`."""
+    return timeout > 0 and not has_viewers and now - last_watched > timeout
 
 
 class TeleoperateRequest(BaseModel):
@@ -204,8 +221,21 @@ def handle_start_teleoperation(request: TeleoperateRequest, websocket_manager=No
             try:
                 last_broadcast_time = 0
                 broadcast_interval = 0.05  # 20 FPS
+                last_watched = time.monotonic()
 
                 while teleoperation_active:
+                    # No manager (direct/programmatic call): nobody to watch for, no watchdog.
+                    has_viewers = websocket_manager is None or bool(websocket_manager.active_connections)
+                    now = time.monotonic()
+                    if has_viewers:
+                        last_watched = now
+                    elif _is_orphaned(has_viewers, last_watched, now):
+                        logger.warning(
+                            "No client watching for %.0fs (page closed?): stopping teleoperation",
+                            ORPHAN_TIMEOUT_S,
+                        )
+                        break
+
                     action = teleop_device.get_action()
                     robot.send_action(action)
 
